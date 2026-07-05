@@ -31,33 +31,49 @@ export default function EditorScreen() {
   const [isExcluido, setIsExcluido] = useState(false);
   const [tagsInput, setTagsInput] = useState('');
   const [statusSalvamento, setStatusSalvamento] = useState('Rascunho');
-  const [carregando, setCarregando] = useState(true);
+  
+  // Estado de Carregamento (Otimizado)
+  const [carregandoDados, setCarregandoDados] = useState(true);
+  const [editorPronto, setEditorPronto] = useState(false);
 
   const [isEditing, setIsEditing] = useState(id === 'novo');
   const [isFullscreen, setIsFullscreen] = useState(false);
-  
   const [menuVisivel, setMenuVisivel] = useState(false);
   const [modalExclusaoVisivel, setModalExclusaoVisivel] = useState(false);
 
+  // Animações BML
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const animacaoHeaderY = useRef(new Animated.Value(0)).current;
   const keyboardTranslateY = useRef(new Animated.Value(0)).current;
-  
   const panY = useRef(new Animated.Value(SCREEN_HEIGHT)).current;
   const overlayOpacity = useRef(new Animated.Value(0)).current;
-
   const dialogScale = useRef(new Animated.Value(0.9)).current;
   const dialogOpacity = useRef(new Animated.Value(0)).current;
+  
+  // 👇 Animação de Shimmer (Pulsação) para o Skeleton
+  const pulseAnim = useRef(new Animated.Value(0.3)).current;
 
-  const dadosSalvarRef = useRef({ titulo, conteudo, classe, statusDoc, isFavorito, isArquivado, tagsInput, currentId, carregando, isExcluido });
+  const dadosSalvarRef = useRef({ titulo, conteudo, classe, statusDoc, isFavorito, isArquivado, tagsInput, currentId, carregandoDados, isExcluido });
 
-  useEffect(() => { dadosSalvarRef.current = { titulo, conteudo, classe, statusDoc, isFavorito, isArquivado, tagsInput, currentId, carregando, isExcluido }; }, [titulo, conteudo, classe, statusDoc, isFavorito, isArquivado, tagsInput, currentId, carregando, isExcluido]);
+  useEffect(() => { dadosSalvarRef.current = { titulo, conteudo, classe, statusDoc, isFavorito, isArquivado, tagsInput, currentId, carregandoDados, isExcluido }; }, [titulo, conteudo, classe, statusDoc, isFavorito, isArquivado, tagsInput, currentId, carregandoDados, isExcluido]);
 
   const textoLimpo = (conteudo || '').replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').trim();
 
+  // 👇 Ativação da Animação do Shimmer (Skeleton)
+  useEffect(() => {
+    if (!editorPronto) {
+      Animated.loop(
+        Animated.sequence([
+          Animated.timing(pulseAnim, { toValue: 0.7, duration: 800, useNativeDriver: true }),
+          Animated.timing(pulseAnim, { toValue: 0.3, duration: 800, useNativeDriver: true })
+        ])
+      ).start();
+    }
+  }, [editorPronto]);
+
   const executarPersistenciaInviolavel = async () => {
     const dados = dadosSalvarRef.current;
-    if (dados.carregando || dados.isExcluido) return;
+    if (dados.carregandoDados || dados.isExcluido) return;
     if (!dados.titulo.trim() && !dados.conteudo.trim() && !dados.currentId) return;
     try {
       let textoId = dados.currentId;
@@ -80,14 +96,14 @@ export default function EditorScreen() {
           const tagsDoc = await getTagsDoTexto(currentId); setTagsInput(tagsDoc);
         }
       }
-      setCarregando(false);
+      setCarregandoDados(false);
     }
     carregar();
     return () => { executarPersistenciaInviolavel(); };
   }, []);
 
   useEffect(() => {
-    if (carregando || isExcluido) return;
+    if (carregandoDados || isExcluido) return;
     if (!titulo.trim() && !conteudo.trim() && !currentId) return;
     setStatusSalvamento('A guardar...');
     const timer = setTimeout(async () => { await executarPersistenciaInviolavel(); setStatusSalvamento('Guardado'); setTimeout(() => setStatusSalvamento(dadosSalvarRef.current.statusDoc), 1200); }, 1500);
@@ -125,7 +141,6 @@ export default function EditorScreen() {
     fecharMenu();
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
     setTimeout(() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy), 150);
-
     setTimeout(() => {
       setModalExclusaoVisivel(true);
       Animated.parallel([
@@ -146,15 +161,10 @@ export default function EditorScreen() {
     PanResponder.create({
       onStartShouldSetPanResponder: () => true,
       onMoveShouldSetPanResponder: (_, gestureState) => Math.abs(gestureState.dy) > 5,
-      onPanResponderMove: (_, gestureState) => {
-        if (gestureState.dy > 0) panY.setValue(gestureState.dy);
-      },
+      onPanResponderMove: (_, gestureState) => { if (gestureState.dy > 0) panY.setValue(gestureState.dy); },
       onPanResponderRelease: (_, gestureState) => {
-        if (gestureState.dy > SCREEN_HEIGHT * 0.2 || gestureState.vy > 1.2) {
-          fecharMenu();
-        } else {
-          Animated.spring(panY, { toValue: 0, damping: 24, stiffness: 220, mass: 1, useNativeDriver: true }).start();
-        }
+        if (gestureState.dy > SCREEN_HEIGHT * 0.2 || gestureState.vy > 1.2) fecharMenu();
+        else Animated.spring(panY, { toValue: 0, damping: 24, stiffness: 220, mass: 1, useNativeDriver: true }).start();
       }
     })
   ).current;
@@ -212,19 +222,37 @@ export default function EditorScreen() {
         </View>
       )}
 
-      {/* 👇 OTIMIZAÇÃO: PaddingHorizontal reduzido para dar mais largura útil ao texto */}
       <ScrollView style={{ flex: 1 }} contentContainerStyle={[styles.editorContainer, { paddingBottom: isEditing ? 160 : 40 }, isExcluido && { opacity: 0.5 }]} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
         <TextInput style={styles.titleInput} placeholder="Título..." placeholderTextColor={theme.textHint} value={titulo} onChangeText={setTitulo} maxLength={150} multiline onBlur={executarPersistenciaInviolavel} editable={isEditing && !isExcluido} />
-        {!carregando && (
+        
+        {/* 👇 SKELETON UI BDL 2.0 (Desaparece apenas quando a WebView renderiza na totalidade) */}
+        {(!editorPronto && !carregandoDados) && (
+          <Animated.View style={[styles.skeletonContainer, { opacity: pulseAnim }]}>
+            <View style={[styles.skeletonLine, { width: '100%' }]} />
+            <View style={[styles.skeletonLine, { width: '90%' }]} />
+            <View style={[styles.skeletonLine, { width: '95%' }]} />
+            <View style={[styles.skeletonLine, { width: '70%' }]} />
+          </Animated.View>
+        )}
+
+        {/* O Editor apenas é exibido no ecrã quando totalmente injetado */}
+        {!carregandoDados && (
           <Animated.View style={{ flex: 1, opacity: fadeAnim }}>
             <RichEditor
               ref={richText} initialContentHTML={conteudo}
-              editorInitializedCallback={() => { setTimeout(() => { if (conteudo) richText.current?.setContentHTML(conteudo); richText.current?.injectJavascript(scriptListasInteligentes); Animated.timing(fadeAnim, { toValue: 1, duration: 250, useNativeDriver: true }).start(); }, 350); }}
+              editorInitializedCallback={() => { 
+                // Dá à WebView tempo extra para calcular as fontes e remover o branco morto
+                setTimeout(() => { 
+                  if (conteudo) richText.current?.setContentHTML(conteudo); 
+                  richText.current?.injectJavascript(scriptListasInteligentes); 
+                  setEditorPronto(true);
+                  Animated.timing(fadeAnim, { toValue: 1, duration: 400, useNativeDriver: true }).start(); 
+                }, 400); 
+              }}
               onChange={tratarMudancaConteudoRichText} onBlur={executarPersistenciaInviolavel} disabled={!isEditing || isExcluido} placeholder={isEditing ? "Comece a escrever sua obra..." : ""}
               containerStyle={{ backgroundColor: 'transparent' }}
               // @ts-ignore
               webViewProps={{ backgroundColor: 'transparent', androidLayerType: 'software' }}
-              // 👇 OTIMIZAÇÃO BDL: Fonte para 17px e Line-Height 1.5, garantindo que cabe muito mais texto na tela!
               editorStyle={{ backgroundColor: theme.bg, color: theme.text, placeholderColor: theme.textHint, contentCSSText: `font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; font-size: 17px; line-height: 1.5; padding-bottom: 400px;` }}
               useContainer={false} scrollEnabled={false} style={{ flex: 1, minHeight: 400, backgroundColor: theme.bg }}
             />
@@ -232,7 +260,7 @@ export default function EditorScreen() {
         )}
       </ScrollView>
 
-      {isEditing && !isExcluido && !carregando && (
+      {isEditing && !isExcluido && !carregandoDados && (
         <Animated.View style={[styles.floatingBarWrapper, { transform: [{ translateY: keyboardTranslateY }] }]}>
           <View style={styles.richBarContainer}>
             <RichToolbar
@@ -248,7 +276,7 @@ export default function EditorScreen() {
         </Animated.View>
       )}
 
-      {/* MODAL BDL 3.0 Bottom Sheet */}
+      {/* Modal BDL 3.0 Bottom Sheet */}
       <Modal visible={menuVisivel} transparent animationType="none" onRequestClose={fecharMenu}>
         <Animated.View style={[styles.modalOverlay, { opacity: overlayOpacity }]}>
           <Pressable style={styles.modalBackground} onPress={fecharMenu} />
@@ -322,6 +350,11 @@ const getStyles = (theme: any) => StyleSheet.create({
   statusText: { fontSize: 13, fontWeight: '800', color: theme.textMuted },
   editorContainer: { flexGrow: 1, paddingHorizontal: 20, paddingTop: Platform.OS === 'ios' ? 120 : 100 },
   titleInput: { fontSize: 28, fontWeight: '800', color: theme.text, marginBottom: 12, paddingVertical: 8, lineHeight: 36, letterSpacing: -0.6 },
+  
+  // 👇 Estilos do Skeleton UI
+  skeletonContainer: { position: 'absolute', top: Platform.OS === 'ios' ? 180 : 160, left: 20, right: 20, gap: 14 },
+  skeletonLine: { height: 18, backgroundColor: theme.surface, borderRadius: 8 },
+
   floatingBarWrapper: { position: 'absolute', bottom: 0, left: 0, right: 0, zIndex: 100 },
   richBarContainer: { backgroundColor: theme.surface, borderTopWidth: 1, borderColor: theme.border, paddingTop: 12, paddingBottom: Platform.OS === 'ios' ? 32 : 16, paddingHorizontal: 12, shadowColor: "#000", shadowOffset: { width: 0, height: -4 }, shadowOpacity: theme.isDark ? 0.3 : 0.05, shadowRadius: 16, elevation: 10 },
   richBar: { height: 48, backgroundColor: 'transparent' },
